@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>コーヒー フレーバーホイール エクスプローラー</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-amber-900 min-h-screen p-4">
+<div class="max-w-5xl mx-auto">
+  <h1 class="text-2xl font-bold text-center text-amber-100 mb-1">コーヒー フレーバーホイール エクスプローラー</h1>
+  <p class="text-center text-amber-300 text-sm mb-4">SCA風フレーバーホイール — 外輪クリックで詳細表示・テイスティングノート記録</p>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+    <!-- Wheel -->
+    <div class="flex justify-center">
+      <svg id="flavorWheel" width="400" height="400" viewBox="0 0 400 400" class="cursor-pointer"></svg>
+    </div>
+
+    <!-- Detail + notes panel -->
+    <div class="space-y-4">
+      <!-- Detail panel -->
+      <div class="bg-amber-800 rounded-xl p-4 text-amber-100 min-h-32">
+        <div id="detailPanel">
+          <p class="text-amber-400 text-sm">← フレーバーホイールをクリック</p>
+        </div>
+      </div>
+
+      <!-- Tasting notes -->
+      <div class="bg-amber-800 rounded-xl p-4">
+        <h2 class="font-semibold text-amber-200 mb-3">テイスティングノート</h2>
+        <div id="notesDisplay" class="flex flex-wrap gap-2 min-h-8 mb-3"></div>
+        <div class="flex gap-2 mb-3">
+          <input type="text" id="noteInput" placeholder="フレーバーを入力..." class="flex-1 rounded px-3 py-1 text-sm bg-amber-900 border border-amber-600 text-amber-100 placeholder-amber-500" maxlength="50">
+          <button id="addNoteBtn" class="bg-amber-600 text-white px-3 py-1 rounded text-sm hover:bg-amber-500" aria-label="追加">追加</button>
+        </div>
+        <div class="flex gap-2">
+          <button id="clearNotesBtn" class="bg-red-800 text-red-200 px-3 py-1 rounded text-sm hover:bg-red-700" aria-label="ノートをクリア">クリア</button>
+          <button id="saveNotesBtn" class="bg-green-700 text-green-100 px-3 py-1 rounded text-sm hover:bg-green-600" aria-label="保存">保存</button>
+          <span class="text-amber-500 text-xs self-center" id="saveStatus"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function escapeHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+const WHEEL = [
+  {
+    name: 'Fruity', color: '#e74c3c', textColor: 'white',
+    children: [
+      { name: 'Berry', color: '#c0392b', children: ['Blackberry','Raspberry','Blueberry','Strawberry'] },
+      { name: 'Citrus', color: '#e67e22', children: ['Grapefruit','Orange','Lemon','Lime'] },
+      { name: 'Other Fruit', color: '#f39c12', children: ['Apple','Pear','Peach','Grape','Mango','Pineapple'] },
+    ]
+  },
+  {
+    name: 'Sweet', color: '#f1c40f', textColor: '#333',
+    children: [
+      { name: 'Caramel', color: '#e6ac00', children: ['Honey','Caramel','Syrup','Brown Sugar'] },
+      { name: 'Chocolate', color: '#8B4513', children: ['Dark Chocolate','Milk Chocolate','Cocoa'] },
+    ]
+  },
+  {
+    name: 'Nutty', color: '#95a5a6', textColor: '#333',
+    children: [
+      { name: 'Nutty', color: '#7f8c8d', children: ['Almond','Hazelnut','Peanut','Walnut'] },
+    ]
+  },
+  {
+    name: 'Roasted', color: '#5d4037', textColor: 'white',
+    children: [
+      { name: 'Smoky', color: '#4e342e', children: ['Smoky','Ashy','Burnt','Tobacco'] },
+      { name: 'Cereal', color: '#6d4c41', children: ['Grain','Malt','Toast'] },
+    ]
+  },
+  {
+    name: 'Spices', color: '#6c3483', textColor: 'white',
+    children: [
+      { name: 'Spices', color: '#5b2c6f', children: ['Pepper','Anise','Clove','Cinnamon','Cardamom'] },
+    ]
+  },
+  {
+    name: 'Floral', color: '#8e44ad', textColor: 'white',
+    children: [
+      { name: 'Floral', color: '#7d3c98', children: ['Jasmine','Rose','Chamomile','Lavender'] },
+      { name: 'Black Tea', color: '#6c3483', children: ['Black Tea'] },
+    ]
+  },
+  {
+    name: 'Sour', color: '#27ae60', textColor: 'white',
+    children: [
+      { name: 'Fermented', color: '#1e8449', children: ['Wine','Vinegar','Fermented'] },
+      { name: 'Sour', color: '#239b56', children: ['Acetic','Sour','Malic'] },
+    ]
+  },
+  {
+    name: 'Green', color: '#2980b9', textColor: 'white',
+    children: [
+      { name: 'Green', color: '#1a6fa8', children: ['Grassy','Vegetative','Fresh','Raw'] },
+    ]
+  },
+];
+
+const CX = 200, CY = 200;
+const INNER_R = 55, MID_R = 120, OUTER_R = 190;
+const svg = document.getElementById('flavorWheel');
+
+let tasting = JSON.parse(localStorage.getItem('coffee_tasting') || '[]');
+
+function polarToXY(angle, r) {
+  return { x: CX + r * Math.cos(angle), y: CY + r * Math.sin(angle) };
+}
+
+function arcPath(startAngle, endAngle, r1, r2) {
+  const s1 = polarToXY(startAngle, r1);
+  const s2 = polarToXY(startAngle, r2);
+  const e1 = polarToXY(endAngle, r1);
+  const e2 = polarToXY(endAngle, r2);
+  const large = endAngle - startAngle > Math.PI ? 1 : 0;
+  return `M${s1.x},${s1.y} A${r1},${r1} 0 ${large},1 ${e1.x},${e1.y} L${e2.x},${e2.y} A${r2},${r2} 0 ${large},0 ${s2.x},${s2.y} Z`;
+}
+
+function midAngle(a, b) { return (a + b) / 2; }
+
+function addText(angle, r, text, fontSize, color) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  el.setAttribute('x', CX + r * Math.cos(angle));
+  el.setAttribute('y', CY + r * Math.sin(angle) + fontSize * 0.4);
+  el.setAttribute('text-anchor', 'middle');
+  el.setAttribute('fill', color || 'white');
+  el.setAttribute('font-size', fontSize);
+  el.setAttribute('pointer-events', 'none');
+  el.setAttribute('font-weight', 'bold');
+  el.textContent = text.length > 10 ? text.substring(0, 9) + '…' : text;
+  svg.appendChild(el);
+}
+
+function drawWheel() {
+  svg.innerHTML = '';
+
+  // Center
+  const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  c.setAttribute('cx', CX); c.setAttribute('cy', CY); c.setAttribute('r', INNER_R);
+  c.setAttribute('fill', '#3e1f0a'); svg.appendChild(c);
+  const ct = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  ct.setAttribute('x', CX); ct.setAttribute('y', CY + 5);
+  ct.setAttribute('text-anchor', 'middle'); ct.setAttribute('fill', '#fbbf24');
+  ct.setAttribute('font-size', '13'); ct.setAttribute('font-weight', 'bold');
+  ct.textContent = 'Coffee'; svg.appendChild(ct);
+
+  const totalCategories = WHEEL.length;
+  const catAngle = (2 * Math.PI) / totalCategories;
+
+  WHEEL.forEach((cat, ci) => {
+    const catStart = ci * catAngle - Math.PI / 2;
+    const catEnd = catStart + catAngle;
+    const catMid = midAngle(catStart, catEnd);
+
+    // Inner ring (category)
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', arcPath(catStart, catEnd, INNER_R, MID_R));
+    path.setAttribute('fill', cat.color);
+    path.setAttribute('stroke', '#fff'); path.setAttribute('stroke-width', '1.5');
+    path.style.cursor = 'pointer';
+    path.addEventListener('click', () => showDetail(cat, null, null));
+    svg.appendChild(path);
+    addText(catMid, (INNER_R + MID_R) / 2, cat.name, 10, cat.textColor || 'white');
+
+    // Outer ring (sub-categories)
+    const subAngle = catAngle / cat.children.length;
+    cat.children.forEach((sub, si) => {
+      const subStart = catStart + si * subAngle;
+      const subEnd = subStart + subAngle;
+      const subMid = midAngle(subStart, subEnd);
+
+      const subPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      // Lighten sub color slightly
+      subPath.setAttribute('d', arcPath(subStart, subEnd, MID_R, OUTER_R));
+      subPath.setAttribute('fill', sub.color);
+      subPath.setAttribute('stroke', '#fff'); subPath.setAttribute('stroke-width', '1');
+      subPath.style.cursor = 'pointer';
+      subPath.addEventListener('click', () => showDetail(cat, sub, null));
+      svg.appendChild(subPath);
+      addText(subMid, (MID_R + OUTER_R) / 2, sub.name, 9, 'white');
+    });
+  });
+}
+
+function showDetail(cat, sub, item) {
+  const panel = document.getElementById('detailPanel');
+  let html = `<h3 class="font-bold text-lg text-amber-200 mb-2">${escapeHtml(cat.name)}</h3>`;
+  if (sub) {
+    html += `<p class="text-amber-300 font-medium mb-2">${escapeHtml(sub.name)}</p>`;
+    html += `<div class="flex flex-wrap gap-2 mt-2">`;
+    sub.children.forEach(child => {
+      html += `<button class="flavor-btn bg-amber-700 hover:bg-amber-600 text-amber-100 text-xs px-3 py-1 rounded-full" data-flavor="${escapeHtml(child)}">${escapeHtml(child)}</button>`;
+    });
+    html += '</div>';
+    html += `<p class="text-amber-500 text-xs mt-3">フレーバーボタンをクリックでノートに追加</p>`;
+  } else {
+    html += '<p class="text-amber-400 text-sm">外輪のサブカテゴリをクリックして詳細表示</p>';
+    html += '<div class="mt-2 text-amber-300 text-sm">';
+    cat.children.forEach(s => {
+      html += `<span class="mr-2">• ${escapeHtml(s.name)}</span>`;
+    });
+    html += '</div>';
+  }
+  panel.innerHTML = html;
+
+  panel.querySelectorAll('.flavor-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      addTasting(btn.dataset.flavor);
+    });
+  });
+}
+
+function addTasting(flavor) {
+  if (!tasting.includes(flavor)) {
+    tasting.push(flavor);
+    renderNotes();
+  }
+}
+
+function renderNotes() {
+  const container = document.getElementById('notesDisplay');
+  container.innerHTML = '';
+  tasting.forEach((f, i) => {
+    const span = document.createElement('span');
+    span.className = 'bg-amber-600 text-white text-xs px-3 py-1 rounded-full flex items-center gap-1';
+    const text = document.createTextNode(f);
+    span.appendChild(text);
+    const btn = document.createElement('button');
+    btn.textContent = '×';
+    btn.className = 'ml-1 hover:text-red-200';
+    btn.setAttribute('aria-label', `${f}を削除`);
+    btn.addEventListener('click', () => { tasting.splice(i, 1); renderNotes(); });
+    span.appendChild(btn);
+    container.appendChild(span);
+  });
+}
+
+document.getElementById('addNoteBtn').addEventListener('click', () => {
+  const input = document.getElementById('noteInput');
+  const val = input.value.trim().replace(/[<>&"]/g, '');
+  if (val) { addTasting(val); input.value = ''; }
+});
+
+document.getElementById('noteInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('addNoteBtn').click();
+});
+
+document.getElementById('clearNotesBtn').addEventListener('click', () => {
+  tasting = [];
+  renderNotes();
+  localStorage.removeItem('coffee_tasting');
+  document.getElementById('saveStatus').textContent = 'クリアしました';
+  setTimeout(() => document.getElementById('saveStatus').textContent = '', 2000);
+});
+
+document.getElementById('saveNotesBtn').addEventListener('click', () => {
+  localStorage.setItem('coffee_tasting', JSON.stringify(tasting));
+  document.getElementById('saveStatus').textContent = '保存しました！';
+  setTimeout(() => document.getElementById('saveStatus').textContent = '', 2000);
+});
+
+drawWheel();
+renderNotes();
+</script>
+</body>
+</html>
